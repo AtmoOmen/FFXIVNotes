@@ -466,3 +466,37 @@ private delegate void ReceiveAchievementProgressDelegate(Achievement* achievemen
 private static Hook<ReceiveAchievementProgressDelegate>? ReceiveAchievementProgressHook;
 ```
 
+
+
+## CancelCast / 取消咏唱
+
+实际游戏内可用于取消咏唱的函数和实际可利用的方式很多, 仅列出我最早拿到的一种
+
+```csharp
+[Signature("48 83 EC 38 33 D2 C7 44 24 20 00 00 00 00 45 33 C9")]
+private static Action? CancelCast;
+```
+
+
+
+## ParseActionCommandArgument / 解析 ac 命令参数
+
+实际解析诸如 `<t>` `<tt>` `<focus>` 之类参数的地方, 可以用来添加自定义命令参数
+
+```csharp
+private delegate GameObject* ParseActionCommandArgDelegate(nint a1, nint arg, bool a3, bool a4);
+[Signature("E8 ?? ?? ?? ?? 4C 8B F8 49 B8", DetourName = nameof(ParseActionCommandArgDetour))]
+private static Hook<ParseActionCommandArgDelegate>? ParseActionCommandArgHook;
+
+private static unsafe GameObject* ParseActionCommandArgDetour(nint a1, nint arg, bool a3, bool a4)
+{
+    var original = ParseActionCommandArgHook.Original(a1, arg, a3, a4);
+
+    var parsedArg = MemoryHelper.ReadSeStringNullTerminated(arg).TextValue;
+    if (!parsedArg.Equals("<center>")) return original;
+
+    IsNeedToModify = true;
+    return Control.GetLocalPlayer();
+}
+```
+
