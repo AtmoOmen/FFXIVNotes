@@ -116,9 +116,181 @@ private static byte GetGrandCompanyRankDetour(PlayerState* instance)
 
 ## Return / 返回
 
+导引到 `ActionManager.UseAction` , 如果成功则返回 `1`
+
 ```csharp
 private delegate byte ReturnDelegate(AgentInterface* agentReturn);
 [Signature("48 89 5C 24 ?? 48 89 74 24 ?? 57 48 83 EC ?? 48 8B 3D ?? ?? ?? ?? 48 8B D9 48 8D 0D", DetourName = nameof(ReturnDetour))]
 private static Hook<ReturnDelegate>? ReturnHook;
+```
+
+
+
+## IsTargetable / 游戏物体是否可选中
+
+只要 `LocalPlayer` 不为空就会反复遍历包含自己在内的所有 `GameObject` 的可选中状态, 导引到 `GameObject.GetIsTargetable()`, 会导致 PVP 内使用 `冲天` 的 `龙骑士` 也可被选中, 但实际不可对其使用技能 ~~(可以用做 Framework.Update)~~
+
+```csharp
+private delegate bool IsTargetableDelegate(GameObjectStruct* gameObj);
+[Signature("40 53 48 83 EC 20 F3 0F 10 89 ?? ?? ?? ?? 0F 57 C0 0F 2E C8 48 8B D9 7A 0A", DetourName = nameof(IsTargetableDetour))]
+private static Hook<IsTargetableDelegate>? IsTargetableHook;
+```
+
+
+
+## GetClipboardData / 获取剪贴板数据
+
+从系统剪贴板内获取数据, 最后返回 Utf8String*
+
+```csharp
+private delegate Utf8String* GetClipboardDataDelegate(nint a1);
+[Signature("40 53 48 81 EC ?? ?? ?? ?? 48 8B 05 ?? ?? ?? ?? 48 33 C4 48 89 84 24 ?? ?? ?? ?? 48 8B D9 BA", DetourName = nameof(GetClipboardDataDetour))]
+private static Hook<GetClipboardDataDelegate>? GetClipboardDataHook;
+
+private static Utf8String* GetClipboardDataDetour(nint a1)
+{
+    var copyModule = Framework.Instance()->GetUIClipboard();
+    if (copyModule == null) return GetClipboardDataHook.Original(a1);
+
+    var originalText = Clipboard.GetText();
+    if (string.IsNullOrWhiteSpace(originalText)) return GetClipboardDataHook.Original(a1);
+    
+    // 多行转单行
+    var modifiedText = originalText.Replace("\r\n", " ").Replace("\n", " ").Replace("\u000D", " ")
+                                   .Replace("\u000D\u000A", " ");
+
+    if (modifiedText == originalText) return GetClipboardDataHook.Original(a1);
+
+    return Utf8String.FromString(modifiedText);
+}
+```
+
+
+
+## CutsceneInput / 过场剧情输入
+
+整体用于判断处理过场剧情是否可跳过
+
+```csharp
+private delegate void CutsceneHandleInputDelegate(nint a1);
+[Signature("40 53 48 83 EC 20 80 79 29 00 48 8B D9 0F 85", DetourName = nameof(CutsceneHandleInputDetour))]
+private static Hook<CutsceneHandleInputDelegate>? CutsceneHandleInputHook;
+
+    private unsafe void CutsceneHandleInputDetour(nint a1)
+    {
+        var allowSkip = *(nint*)(a1 + 56) != 0;
+        if (allowSkip)
+        {
+            SafeMemory.WriteBytes(ConditionAddress, [0xEB]);
+            CutsceneHandleInputHook.Original(a1);
+            SafeMemory.WriteBytes(ConditionAddress, [0x75]);
+
+            TaskHelper.Enqueue(() =>
+            {
+                if (!TryGetAddonByName<AtkUnitBase>("SelectString", out var addon) || !IsAddonAndNodesReady(addon))
+                    return false;
+
+                if (addon->GetTextNodeById(2)->
+                        NodeText.ExtractText().Contains(LuminaCache.GetRow<Addon>(281).Text.RawString))
+                {
+                    if (Click.TrySendClick("select_string1"))
+                    {
+                        TaskHelper.Abort();
+                        return true;
+                    }
+
+                    return false;
+                }
+
+                return false;
+            });
+
+            return;
+        }
+
+        CutsceneHandleInputHook.Original(a1);
+    }
+
+```
+
+
+
+## ProcessSendedChat / 处理将发送聊天信息
+
+位于发送服务器前, 整体处理起来需要关注 `byte**` 和 `500` 的 TextLength
+
+```csharp
+private delegate byte ProcessSendedChatDelegate(nint uiModule, byte** message, nint a3);
+[Signature("E8 ?? ?? ?? ?? FE 86 ?? ?? ?? ?? C7 86 ?? ?? ?? ?? ?? ?? ?? ??", DetourName = nameof(ProcessSendedChatDetour))]
+private static Hook<ProcessSendedChatDelegate>? ProcessSendedChatHook;
+
+private byte ProcessSendedChatDetour(nint uiModule, byte** message, nint a3)
+{
+    var originalSeString = MemoryHelper.ReadSeStringNullTerminated((nint)(*message));
+    var messageDecode = originalSeString.ToString();
+
+    if (string.IsNullOrWhiteSpace(messageDecode) || messageDecode.StartsWith('/'))
+        return ProcessSendedChatHook.Original(uiModule, message, a3);
+
+    var ssb = new SeStringBuilder();
+    foreach (var payload in originalSeString.Payloads)
+    {
+        if (payload.Type == PayloadType.RawText)
+            ssb.Append(BypassCensorship(((TextPayload)payload).Text));
+        else
+            ssb.Add(payload);
+    }
+
+    var filteredSeString = ssb.Build();
+
+    if (filteredSeString.TextValue.Length <= 500)
+    {
+        var utf8String = Utf8String.FromString(".");
+        utf8String->SetString(filteredSeString.Encode());
+
+        return ProcessSendedChatHook.Original(uiModule, (byte**)((nint)utf8String).ToPointer(), a3);
+    }
+
+    return ProcessSendedChatHook.Original(uiModule, message, a3);
+}
+```
+
+
+
+## BypassCensorship / 绕过屏蔽词显示
+
+屏蔽词均为本地客户端处理, 服务端始终接收原始文本, 聊天框和队员招募两个地方的屏蔽处理都是 `原始字符串->屏蔽词系统->复制字符串->返回`, 因此处理逻辑都是直接绕过中间的屏蔽词系统直接调用复制字符串的函数, 然后返回
+
+```csharp
+private delegate void GetFilteredUtf8StringDelegate(nint vulgarInstance, Utf8String* str);
+[Signature("E8 ?? ?? ?? ?? 48 8B C3 48 83 C4 ?? 5B C3 CC CC CC CC CC CC CC 48 83 EC")]
+private static GetFilteredUtf8StringDelegate? GetFilteredUtf8String;
+
+private delegate nint Utf8StringCopyDelegate(nint a1, nint a2, nint a3 = 1);
+[Signature("48 89 5C 24 ?? 57 48 83 EC ?? 48 8B FA 48 8B D9 48 3B D1 74 ?? 48 8B 52 ?? 41 B0 ?? E8 ?? ?? ?? ?? 4C 8B 43 ?? 48 8B 17 48 8B 0B E8 ?? ?? ?? ?? 0F B6 47 ?? 88 43 ?? 48 8B 47 ?? 48 89 43 ?? 48 8B C3 48 8B 5C 24 ?? 48 83 C4 ?? 5F C3 CC CC CC CC CC CC CC CC CC CC CC CC CC CC CC CC CC CC CC 48 89 5C 24")]
+private static Utf8StringCopyDelegate? Utf8StringCopy;
+
+private delegate nint LocalMessageDisplayDelegate(nint a1, nint a2);
+[Signature("40 53 48 83 EC ?? 48 8D 99 ?? ?? ?? ?? 48 8B CB E8 ?? ?? ?? ?? 48 8B 0D", DetourName = nameof(LocalMessageDisplayDetour))]
+private static Hook<LocalMessageDisplayDelegate>? LocalMessageDisplayHook;
+
+private delegate nint PartyFinderMessageDisplayDelegate(nint a1, nint a2);
+[Signature("48 89 5C 24 ?? 57 48 83 EC ?? 48 8D 99 ?? ?? ?? ?? 48 8B F9 48 8B CB E8", DetourName = nameof(PartyFinderMessageDisplayDetour))]
+private static Hook<PartyFinderMessageDisplayDelegate>? PartyFinderMessageDisplayHook;
+
+private static nint LocalMessageDisplayDetour(nint a1, nint a2)
+    => Utf8StringCopy(a1 + 1096, a2);
+
+private static nint PartyFinderMessageDisplayDetour(nint a1, nint a2)
+    => Utf8StringCopy(a1 + 10488, a2);
+
+// 获取屏蔽词处理后的文本
+private string GetFilteredString(string str)
+{
+    var utf8String = Utf8String.FromString(str);
+    GetFilteredUtf8String(Marshal.ReadIntPtr((nint)Framework.Instance() + 0x2B40), utf8String);
+
+    return (*utf8String).ToString();
+}
 ```
 
