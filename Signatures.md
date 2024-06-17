@@ -382,13 +382,87 @@ private static TryJoinNoviceNetworkDelegate? TryJoinNoviceNetwork;
 
 ## IsPlayerOnDiving / 是否正在潜水
 
-持续被调用, 如果返回 `true` 本地玩家将会显示为潜水状态动作
+持续被调用, 如果返回 `true` 本地玩家将会显示为潜水状态动作, 同时从陆地上进入水下不再需要过图, 在水下交互后正式切换为水下状态
 
-```
+```csharp
 private delegate bool IsPlayerOnDivingDelegate(nint a1);
-
-[Signature("E8 ?? ?? ?? ?? 84 C0 74 ?? F3 0F 10 35 ?? ?? ?? ?? F3 0F 10 3D ?? ?? ?? ?? F3 44 0F 10 05",
-           DetourName = nameof(IsPlayingOnDivingDetour))]
+[Signature("E8 ?? ?? ?? ?? 84 C0 74 ?? F3 0F 10 35 ?? ?? ?? ?? F3 0F 10 3D ?? ?? ?? ?? F3 44 0F 10 05", DetourName = nameof(IsPlayingOnDivingDetour))]
 private static Hook<IsPlayerOnDivingDelegate>? IsPlayerOnDivingHook;
+```
+
+
+
+## LeveAllowances / 理符限额
+
+```csharp
+[Signature("88 05 ?? ?? ?? ?? 0F B7 41 06", ScanType = ScanType.StaticAddress)]
+private static byte LeveAllowances;
+```
+
+
+
+## GameObjectRotate / 游戏物体旋转
+
+主要用于固定面向
+
+```csharp
+private delegate void GameObjectRotateDelegate(GameObject* obj, float value);
+[Signature("E8 ?? ?? ?? ?? 83 FE 4F", DetourName = nameof(GameObjectRotateDetour))]
+private static Hook<GameObjectRotateDelegate>? GameObjectRotateHook;
+```
+
+
+
+## SetFocusByObjectID / 设置焦点目标
+
+```csharp
+private delegate void SetFocusTargetByObjectIDDelegate(TargetSystem* targetSystem, ulong objectID);
+[Signature("E8 ?? ?? ?? ?? BA 0C 00 00 00 48 8D 0D", DetourName = nameof(SetFocusTargetByObjectID))]
+private static Hook<SetFocusTargetByObjectIDDelegate>? SetFocusTargetByObjectIDHook;
+
+private static void SetFocusTargetByObjectID(TargetSystem* targetSystem, ulong objectID)
+{
+    if (objectID == 0xE000_0000)
+    {
+        objectID = Service.Target.Target?.ObjectId ?? 0xE000_0000;
+        FocusTarget = Service.Target.Target?.ObjectId;
+    }
+    else
+        FocusTarget = Service.Target.Target.ObjectId;
+
+    SetFocusTargetByObjectIDHook.Original(targetSystem, objectID);
+}
+```
+
+
+
+## AbandonDuty / 退出任务
+
+会受到任何可能的状态限制, `a1` 固定传入 `false`
+
+```csharp
+private delegate void AbandonDutyDelagte(bool a1);
+[Signature("E8 ?? ?? ?? ?? 48 8B 43 28 B1 01")]
+private static AbandonDutyDelagte? AbandonDuty;
+```
+
+
+
+## CountdownInit / 倒计时初始化
+
+```csharp
+public delegate nint CountdownInitDelegate(nint a1, nint a2);
+[Signature("E9 ?? ?? ?? ?? 48 83 C4 ?? 5B C3 CC CC CC CC CC CC CC CC CC CC CC CC CC CC CC CC CC CC 40 53 48 83 EC ?? 48 8B 0D", DetourName = nameof(CountdownInitDetour))]
+private static Hook<CountdownInitDelegate>? CountdownInitHook;
+```
+
+
+
+## ReceiveAchievement / 接收成就数据
+
+```csharp
+private delegate void ReceiveAchievementProgressDelegate(Achievement* achievement, uint id, uint current, uint max);
+[Signature("C7 81 ?? ?? ?? ?? ?? ?? ?? ?? 89 91 ?? ?? ?? ?? 44 89 81", DetourName = nameof(ReceiveAchievementProgressDetour))]
+private static Hook<ReceiveAchievementProgressDelegate>? ReceiveAchievementProgressHook;
 ```
 
