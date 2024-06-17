@@ -294,3 +294,101 @@ private string GetFilteredString(string str)
 }
 ```
 
+
+
+## IsFlightProhibited / 是否禁止飞行
+
+用于检测当前区域是否禁止飞行, 也可以手动传回 `true` 来在本地客户端解锁飞行, 但在他人视角来看是在地面瞬移
+
+```csharp
+private delegate nint IsFlightProhibited(nint a1);
+[Signature("48 89 5C 24 ?? 57 48 83 EC 20 48 8B 1D ?? ?? ?? ?? 48 8B F9 48 85 DB 0F 84 ?? ?? ?? ?? 80 3D", DetourName = nameof(IsFlightProhibitedDetour))]
+private static Hook<IsFlightProhibited>? IsFlightProhibitedHook;
+
+// a1 可以从 48 8D 0D ?? ?? ?? ?? E8 ?? ?? ?? ?? 85 C0 0F 85 ?? ?? ?? ?? 48 89 B4 24 获取
+private nint IsFlightProhibitedDetour(nint a1) 
+{ 
+    return isProhibited ? IsFlightProhibitedHook.Original(a1) : 0; 
+}
+```
+
+
+
+## GetActionRange / 获取技能释放距离
+
+获取技能可释放距离, 最多可在本地 `+2`
+
+```csharp
+private delegate float GetActionRangeDelegate(uint actionID);
+[Signature("E8 ?? ?? ?? ?? F3 0F 10 8F ?? ?? ?? ?? 0F 28 F8", DetourName = nameof(GetActionRangeDetour))]
+private Hook<GetActionRangeDelegate>? GetActionRangeHook;
+
+private float GetActionRangeDetour(uint actionID)
+{
+    var original = GetActionRangeHook.Original(actionID);
+    return original + 2f;
+}
+```
+
+
+
+## OnSendPacket / 本地对服务器发包
+
+所有的网络活动都走此处上传至服务器, `a1` 为 `Opcode` , `a2` 和 `a3` 为数据包具体内容
+
+```csharp
+private delegate byte PacketDispatcher_OnSendPacket(nint a1, ushort* a2, nint a3, byte a4);
+[Signature("48 89 5C 24 ?? 48 89 6C 24 ?? 48 89 74 24 ?? 57 41 56 41 57 48 83 EC 70 8B 81 ?? ?? ?? ??",
+DetourName = nameof(PacketDispatcher_OnSendPacketDetour))]
+internal Hook<PacketDispatcher_OnSendPacket>? PacketDispatcher_OnSendPacketHook;
+```
+
+
+
+## IsNoviceNetworkFlagSet / 检测新人频道特定标志设定情况
+
+已知情况: `8U : 是否开启自动加入新人频道`
+
+```csharp
+private delegate bool IsNoviceNetworkFlagSetDelegate(PlayerState* instance, uint flag);
+[Signature("8B C2 44 8B C2 C1 E8 ?? 4C 8B C9 83 F8 ?? 72 ?? 32 C0 C3 41 83 E0 ?? BA ?? ?? ?? ?? 41 0F B6 C8 D2 E2", ScanType = ScanType.Text)]
+private static IsNoviceNetworkFlagSetDelegate? IsNoviceNetworkFlagSet;
+```
+
+
+
+## TryJoinNoviceNetwork / 尝试加入新人频道
+
+```csharp
+[StructLayout(LayoutKind.Explicit, Size = 40)]
+private struct InfoProxyBeginner
+{
+    [FieldOffset(0)]
+    public InfoProxyInterface InfoProxyInterface;
+
+    [FieldOffset(24)]
+    public bool IsInNoviceNetwork;
+
+    public static InfoProxyBeginner* Instance() 
+        => (InfoProxyBeginner*)InfoModule.Instance()->GetInfoProxyById((InfoProxyId)20);
+}
+
+private delegate byte TryJoinNoviceNetworkDelegate(InfoProxyBeginner* infoProxy20);
+[Signature("E8 ?? ?? ?? ?? 45 33 F6 41 B4")]
+private static TryJoinNoviceNetworkDelegate? TryJoinNoviceNetwork;
+```
+
+
+
+## IsPlayerOnDiving / 是否正在潜水
+
+持续被调用, 如果返回 `true` 本地玩家将会显示为潜水状态动作
+
+```
+private delegate bool IsPlayerOnDivingDelegate(nint a1);
+
+[Signature("E8 ?? ?? ?? ?? 84 C0 74 ?? F3 0F 10 35 ?? ?? ?? ?? F3 0F 10 3D ?? ?? ?? ?? F3 44 0F 10 05",
+           DetourName = nameof(IsPlayingOnDivingDetour))]
+private static Hook<IsPlayerOnDivingDelegate>? IsPlayerOnDivingHook;
+```
+
