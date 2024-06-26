@@ -500,3 +500,13 @@ private static unsafe GameObject* ParseActionCommandArgDetour(nint a1, nint arg,
 }
 ```
 
+
+
+## ReadyCheck / 准备确认
+
+```c#
+private delegate nint ReadyCheckDelegate(nint a1, byte a2, ulong contentID, ushort a4)
+[Signature("E8 ?? ?? ?? ?? E9 ?? ?? ?? ?? FF 50 ?? 66 44 89 64 24", DetourName = nameof(ReadyCheckDetour))]
+private static Hook<ReadyCheckDelegate>? ReadyCheckHook;
+```
+
